@@ -2,12 +2,12 @@ import logging
 from typing import Literal
 from langgraph.graph import END, StateGraph
 
-from backend.app.agents.analyst import analyst_agent
-from backend.app.agents.executor import executor_agent
-from backend.app.agents.planner import planner_agent
-from backend.app.agents.researcher import researcher_agent
-from backend.app.agents.verifier import verifier_agent
-from backend.app.graph.state import AgentState
+from app.agents.analyst import analyst_agent
+from app.agents.executor import executor_agent
+from app.agents.planner import planner_agent
+from app.agents.researcher import researcher_agent
+from app.agents.verifier import verifier_agent
+from app.graph.state import AgentState
 
 logger = logging.getLogger("agent_workflow")
 

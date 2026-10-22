@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional, Type, TypeVar
 import requests
 from pydantic import BaseModel, ValidationError
 
-from backend.app.config import settings
+from app.config import settings
 
 logger = logging.getLogger("llm_service")
 

@@ -1,7 +1,7 @@
 import logging
 from typing import Any, Dict
-from backend.app.graph.state import AgentState
-from backend.app.services.llm_service import llm_service
+from app.graph.state import AgentState
+from app.services.llm_service import llm_service
 
 logger = logging.getLogger("executor_agent")
 

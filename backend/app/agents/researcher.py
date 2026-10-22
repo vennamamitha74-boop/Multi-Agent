@@ -1,9 +1,9 @@
 import logging
 from typing import Any, Dict, List
-from backend.app.graph.state import AgentState
-from backend.app.services.llm_service import llm_service
-from backend.app.services.rag_service import rag_service
-from backend.app.services.search_service import search_service
+from app.graph.state import AgentState
+from app.services.llm_service import llm_service
+from app.services.rag_service import rag_service
+from app.services.search_service import search_service
 
 logger = logging.getLogger("researcher_agent")
 

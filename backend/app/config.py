@@ -3,9 +3,10 @@ from pathlib import Path
 from typing import List, Optional
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# Root directory of the repository (where .env is located)
-BASE_DIR = Path(__file__).resolve().parent.parent.parent
-ENV_FILE = BASE_DIR / ".env"
+# Directory paths for environment configuration (.env resolution)
+BACKEND_DIR = Path(__file__).resolve().parent.parent
+ROOT_DIR = BACKEND_DIR.parent
+ENV_FILE = ROOT_DIR / ".env" if (ROOT_DIR / ".env").exists() else (BACKEND_DIR / ".env")
 
 class Settings(BaseSettings):
     # LLM Service (Google Gemini)

@@ -7,10 +7,10 @@ from fastapi import BackgroundTasks, FastAPI, File, HTTPException, UploadFile, s
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-from backend.app.config import settings
-from backend.app.graph.state import AgentState
-from backend.app.graph.workflow import multi_agent_graph
-from backend.app.services.rag_service import rag_service
+from app.config import settings
+from app.graph.state import AgentState
+from app.graph.workflow import multi_agent_graph
+from app.services.rag_service import rag_service
 
 logging.basicConfig(
     level=logging.INFO,

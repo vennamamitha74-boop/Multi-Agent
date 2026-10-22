@@ -2,8 +2,8 @@ import logging
 from typing import List
 from pydantic import BaseModel, Field
 
-from backend.app.graph.state import AgentState, Subtask, TaskPlan
-from backend.app.services.llm_service import llm_service
+from app.graph.state import AgentState, Subtask, TaskPlan
+from app.services.llm_service import llm_service
 
 logger = logging.getLogger("planner_agent")
 

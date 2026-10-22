@@ -4,8 +4,8 @@ from typing import Any, Dict, List, Optional
 from qdrant_client import QdrantClient
 from qdrant_client.http import models as qmodels
 
-from backend.app.config import settings
-from backend.app.services.llm_service import llm_service
+from app.config import settings
+from app.services.llm_service import llm_service
 
 logger = logging.getLogger("rag_service")
 

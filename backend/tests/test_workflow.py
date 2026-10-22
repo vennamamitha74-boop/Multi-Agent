@@ -3,9 +3,12 @@ import time
 from pathlib import Path
 from fastapi.testclient import TestClient
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+# Ensure backend directory is in sys.path
+backend_dir = Path(__file__).resolve().parent.parent
+if str(backend_dir) not in sys.path:
+    sys.path.insert(0, str(backend_dir))
 
-from backend.app.main import app, TASK_STORE
+from app.main import app, TASK_STORE
 
 client = TestClient(app)
 

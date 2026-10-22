@@ -3,11 +3,13 @@ from pathlib import Path
 import pytest
 from pydantic import BaseModel, Field
 
-# Ensure project root is in sys.path
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+# Ensure backend directory is in sys.path
+backend_dir = Path(__file__).resolve().parent.parent
+if str(backend_dir) not in sys.path:
+    sys.path.insert(0, str(backend_dir))
 
-from backend.app.config import settings
-from backend.app.services.llm_service import llm_service
+from app.config import settings
+from app.services.llm_service import llm_service
 
 
 class SampleTaskPlan(BaseModel):
