@@ -17,6 +17,10 @@ venv.bak/
 
 # Node / JS
 node_modules/
+.next/
+out/
+build/
+dist/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
