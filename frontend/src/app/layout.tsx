@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Multi-Agent AI Platform | Autonomous Task Planning & Execution",
-  description: "Enterprise Multi-Agent LLM Orchestration Platform with LangGraph, RAG, and Real-time Verification",
+  title: "Multi-Agent AI Platform | Enterprise Autonomous Orchestration",
+  description: "Enterprise Multi-Agent LLM Orchestration Platform with LangGraph, Qdrant Vector RAG, and Real-Time Verification",
 };
 
 export default function RootLayout({
@@ -13,7 +13,7 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en" className="dark">
-      <body className="bg-[#090d16] text-slate-100 antialiased selection:bg-indigo-500 selection:text-white">
+      <body className="bg-[#0F1515] text-white antialiased selection:bg-[#177D81] selection:text-white font-sans">
         {children}
       </body>
     </html>
