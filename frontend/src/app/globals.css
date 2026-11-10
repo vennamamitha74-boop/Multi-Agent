@@ -3,13 +3,16 @@
 @tailwind utilities;
 
 :root {
-  --background: #0F1515;
-  --foreground: #FFFFFF;
-  --sidebar-bg: #08282A;
-  --card-bg: #1C5052;
-  --primary: #177D81;
-  --accent: #BDDED6;
-  --border-color: rgba(189, 222, 214, 0.16);
+  --background: #F8FAFC;
+  --foreground: #0F172A;
+  --card-bg: #FFFFFF;
+  --soft-coral: #FBB4AE;
+  --soft-blue: #B3CDE3;
+  --soft-green: #CCEBC5;
+  --border-color: #E2E8F0;
+  --text-primary: #0F172A;
+  --text-secondary: #475569;
+  --text-muted: #64748B;
 }
 
 body {
@@ -22,23 +25,36 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* Enterprise Surface Classes */
-.deep-card {
-  background-color: #1C5052;
-  border: 1px solid rgba(189, 222, 214, 0.18);
+/* Light Theme Card & Surface Classes */
+.light-card {
+  background-color: #FFFFFF;
+  border: 1px solid #E2E8F0;
+  border-radius: 0.75rem;
+  box-shadow: 0 1px 3px 0 rgba(15, 23, 42, 0.04);
+}
+
+.light-card:hover {
+  border-color: #CBD5E1;
+  box-shadow: 0 4px 6px -1px rgba(15, 23, 42, 0.07);
+}
+
+.light-panel {
+  background-color: #FFFFFF;
+  border: 1px solid #E2E8F0;
+  border-radius: 0.75rem;
+}
+
+.light-input {
+  background-color: #FFFFFF;
+  border: 1px solid #CBD5E1;
+  color: #0F172A;
   border-radius: 0.5rem;
 }
 
-.deep-surface {
-  background-color: #1C5052;
-  border: 1px solid rgba(189, 222, 214, 0.15);
-  border-radius: 0.5rem;
-}
-
-.deep-panel {
-  background-color: #08282A;
-  border: 1px solid #1C5052;
-  border-radius: 0.5rem;
+.light-input:focus {
+  border-color: #6E95BA;
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(179, 205, 227, 0.4);
 }
 
 /* Custom Clean Scrollbars */
@@ -47,138 +63,119 @@ body {
   height: 6px;
 }
 ::-webkit-scrollbar-track {
-  background: #0F1515;
+  background: #F1F5F9;
 }
 ::-webkit-scrollbar-thumb {
-  background: #1C5052;
+  background: #CBD5E1;
   border-radius: 3px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #177D81;
+  background: #94A3B8;
 }
 
-/* Markdown Typography for Reports */
-.report-content h1 {
-  font-size: 1.625rem;
+/* Markdown Typography for Reports in Light Mode */
+.prose-light {
+  color: #1E293B;
+  line-height: 1.65;
+  font-size: 0.875rem;
+}
+
+.prose-light h1,
+.prose-light h2,
+.prose-light h3,
+.prose-light h4 {
+  color: #0F172A;
   font-weight: 700;
-  color: #FFFFFF;
-  margin-top: 1.5rem;
-  margin-bottom: 0.875rem;
-  border-bottom: 1px solid rgba(189, 222, 214, 0.25);
-  padding-bottom: 0.5rem;
-  letter-spacing: -0.01em;
-}
-
-.report-content h2 {
-  font-size: 1.3rem;
-  font-weight: 600;
-  color: #BDDED6;
-  margin-top: 1.35rem;
-  margin-bottom: 0.625rem;
-}
-
-.report-content h3 {
-  font-size: 1.125rem;
-  font-weight: 600;
-  color: #FFFFFF;
-  margin-top: 1.15rem;
+  margin-top: 1.25rem;
   margin-bottom: 0.5rem;
 }
 
-.report-content p {
-  margin-bottom: 0.875rem;
-  line-height: 1.7;
-  color: #E2E8F0;
-  font-size: 0.875rem;
+.prose-light h1 { font-size: 1.25rem; }
+.prose-light h2 { font-size: 1.1rem; }
+.prose-light h3 { font-size: 0.95rem; }
+
+.prose-light p {
+  margin-top: 0.5rem;
+  margin-bottom: 0.5rem;
+  color: #334155;
 }
 
-.report-content ul, .report-content ol {
-  margin-left: 1.25rem;
-  margin-bottom: 0.875rem;
-}
-
-.report-content li {
-  margin-bottom: 0.375rem;
-  line-height: 1.65;
-  color: #E2E8F0;
-  font-size: 0.875rem;
-}
-
-.report-content ul {
-  list-style-type: disc;
-}
-
-.report-content ol {
-  list-style-type: decimal;
-}
-
-.report-content table {
-  width: 100%;
-  border-collapse: collapse;
-  margin-top: 1rem;
-  margin-bottom: 1.25rem;
-  font-size: 0.875rem;
-}
-
-.report-content th, .report-content td {
-  border: 1px solid rgba(189, 222, 214, 0.2);
-  padding: 0.625rem 0.875rem;
-  text-align: left;
-}
-
-.report-content th {
-  background-color: #08282A;
-  color: #BDDED6;
+.prose-light strong {
+  color: #0F172A;
   font-weight: 600;
-  font-size: 0.8125rem;
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
 }
 
-.report-content tr:nth-child(even) {
-  background-color: rgba(28, 80, 82, 0.25);
+.prose-light ul,
+.prose-light ol {
+  padding-left: 1.25rem;
+  margin-top: 0.5rem;
+  margin-bottom: 0.5rem;
+  color: #334155;
 }
 
-.report-content tr:hover {
-  background-color: rgba(28, 80, 82, 0.45);
+.prose-light li {
+  margin-top: 0.25rem;
+  margin-bottom: 0.25rem;
 }
 
-.report-content blockquote {
-  border-left: 3px solid #177D81;
-  padding-left: 1rem;
-  margin-left: 0;
-  margin-right: 0;
-  margin-top: 1rem;
-  margin-bottom: 1rem;
-  color: #BDDED6;
+.prose-light pre {
+  background-color: #F8FAFC;
+  border: 1px solid #E2E8F0;
+  border-radius: 0.5rem;
+  padding: 0.75rem 1rem;
+  overflow-x: auto;
+  font-size: 0.75rem;
+  color: #0F172A;
+  margin: 0.75rem 0;
+}
+
+.prose-light code {
+  background-color: #F1F5F9;
+  border: 1px solid #E2E8F0;
+  border-radius: 0.25rem;
+  padding: 0.15rem 0.35rem;
+  font-size: 0.75rem;
+  color: #0F172A;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.prose-light pre code {
+  background-color: transparent;
+  border: none;
+  padding: 0;
+}
+
+.prose-light blockquote {
+  border-left: 3px solid #B3CDE3;
+  padding-left: 0.75rem;
+  color: #475569;
+  margin: 0.75rem 0;
   font-style: italic;
-  background-color: rgba(8, 40, 42, 0.5);
-  padding-top: 0.625rem;
-  padding-bottom: 0.625rem;
+  background-color: #F8FAFC;
+  padding: 0.5rem 0.75rem;
   border-radius: 0 0.375rem 0.375rem 0;
 }
 
-.report-content code {
-  background-color: #08282A;
-  color: #BDDED6;
-  padding: 0.15rem 0.4rem;
-  border-radius: 0.25rem;
-  font-size: 0.85em;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  border: 1px solid rgba(189, 222, 214, 0.15);
+.prose-light table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0.75rem 0;
+  font-size: 0.75rem;
 }
 
-.report-content pre {
-  background-color: #08282A;
-  padding: 1rem;
-  border-radius: 0.5rem;
-  overflow-x: auto;
-  border: 1px solid rgba(189, 222, 214, 0.2);
-  margin-bottom: 1rem;
+.prose-light th,
+.prose-light td {
+  border: 1px solid #E2E8F0;
+  padding: 0.5rem 0.75rem;
+  text-align: left;
 }
 
-.report-content pre code {
-  padding: 0;
-  background-color: transparent;
-  border: none;
+.prose-light th {
+  background-color: #F8FAFC;
+  font-weight: 600;
+  color: #0F172A;
+}
+
+.prose-light td {
+  color: #334155;
 }

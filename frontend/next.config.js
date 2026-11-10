@@ -1,4 +1,15 @@
 /** @type {import('next').NextConfig} */
+function resolveBackendUrl() {
+  let url = process.env.NEXT_PUBLIC_BACKEND_URL || "http://127.0.0.1:8000";
+  url = url.trim().replace(/\/+$/, "");
+  if (!url.startsWith("http://") && !url.startsWith("https://")) {
+    url = `https://${url}`;
+  }
+  return url;
+}
+
+const backendUrl = resolveBackendUrl();
+
 const nextConfig = {
   reactStrictMode: true,
   output: "standalone",
@@ -6,21 +17,15 @@ const nextConfig = {
     return [
       {
         source: "/api/:path*",
-        destination: process.env.NEXT_PUBLIC_BACKEND_URL 
-          ? `${process.env.NEXT_PUBLIC_BACKEND_URL}/api/:path*`
-          : "http://127.0.0.1:8000/api/:path*"
+        destination: `${backendUrl}/api/:path*`
       },
       {
         source: "/health",
-        destination: process.env.NEXT_PUBLIC_BACKEND_URL 
-          ? `${process.env.NEXT_PUBLIC_BACKEND_URL}/health`
-          : "http://127.0.0.1:8000/health"
+        destination: `${backendUrl}/health`
       },
       {
         source: "/ready",
-        destination: process.env.NEXT_PUBLIC_BACKEND_URL 
-          ? `${process.env.NEXT_PUBLIC_BACKEND_URL}/ready`
-          : "http://127.0.0.1:8000/ready"
+        destination: `${backendUrl}/ready`
       }
     ];
   }

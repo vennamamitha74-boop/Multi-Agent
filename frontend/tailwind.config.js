@@ -5,30 +5,36 @@ module.exports = {
     "./src/components/**/*.{js,ts,jsx,tsx,mdx}",
     "./src/app/**/*.{js,ts,jsx,tsx,mdx}",
   ],
-  darkMode: "class",
   theme: {
     extend: {
       colors: {
-        deep: {
-          bg: "#0F1515",
-          sidebar: "#08282A",
-          card: "#1C5052",
-          cardHover: "#236365",
-          primary: "#177D81",
-          primaryHover: "#1B8E93",
-          accent: "#BDDED6",
-          accentMuted: "#9FB4B0",
-          border: "rgba(189, 222, 214, 0.15)",
-          borderStrong: "#1C5052",
+        coral: {
+          light: "#FDE6E4",
+          DEFAULT: "#FBB4AE",
+          dark: "#E58A82",
         },
-        brand: {
-          50: "#f0fdfa",
-          100: "#ccfbf1",
-          500: "#177D81",
-          600: "#13696C",
-          700: "#0F5558",
-          900: "#08282A",
-        }
+        softBlue: {
+          light: "#E3EEF7",
+          DEFAULT: "#B3CDE3",
+          dark: "#6E95BA",
+        },
+        softGreen: {
+          light: "#EDF8EA",
+          DEFAULT: "#CCEBC5",
+          dark: "#8EB886",
+        },
+        charcoal: {
+          50: "#F8FAFC",
+          100: "#F1F5F9",
+          200: "#E2E8F0",
+          300: "#CBD5E1",
+          400: "#94A3B8",
+          500: "#64748B",
+          600: "#475569",
+          700: "#334155",
+          800: "#1E293B",
+          900: "#0F172A",
+        },
       },
       fontFamily: {
         sans: [
@@ -41,6 +47,10 @@ module.exports = {
           "Ubuntu",
           "sans-serif",
         ],
+      },
+      boxShadow: {
+        card: "0 1px 3px 0 rgba(15, 23, 42, 0.05), 0 1px 2px -1px rgba(15, 23, 42, 0.05)",
+        cardHover: "0 4px 6px -1px rgba(15, 23, 42, 0.08), 0 2px 4px -2px rgba(15, 23, 42, 0.05)",
       },
     },
   },

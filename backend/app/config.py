@@ -43,8 +43,13 @@ class Settings(BaseSettings):
     FRONTEND_ORIGIN: str = "http://localhost:3000"
     ENVIRONMENT: str = "development"
     ADMIN_BOOTSTRAP_SECRET: str = "admin-bootstrap-secret-change-me"
+    PORT: Optional[int] = None
     BACKEND_PORT: int = 8000
     BACKEND_HOST: str = "0.0.0.0"
+
+    @property
+    def effective_port(self) -> int:
+        return int(os.environ.get("PORT") or self.PORT or self.BACKEND_PORT or 8000)
 
     model_config = SettingsConfigDict(
         env_file=str(ENV_FILE) if ENV_FILE.exists() else None,

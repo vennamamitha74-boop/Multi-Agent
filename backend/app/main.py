@@ -28,15 +28,32 @@ app = FastAPI(
     description="Autonomous Task Planning and Multi-Agent Execution Framework"
 )
 
-# CORS configuration
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[
-        settings.FRONTEND_ORIGIN,
+# CORS configuration supporting local development and production Render deployments
+def get_allowed_origins() -> List[str]:
+    origins = {
         "http://localhost:3000",
         "http://127.0.0.1:3000",
-        "*"
-    ],
+        "http://localhost:8000",
+        "http://127.0.0.1:8000",
+    }
+    raw_origin = os.environ.get("FRONTEND_ORIGIN", settings.FRONTEND_ORIGIN or "")
+    for o in raw_origin.split(","):
+        clean = o.strip().rstrip("/")
+        if clean:
+            origins.add(clean)
+
+    addl = os.environ.get("ADDITIONAL_ALLOWED_ORIGINS", "")
+    for o in addl.split(","):
+        clean = o.strip().rstrip("/")
+        if clean:
+            origins.add(clean)
+
+    return sorted(list(origins))
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=get_allowed_origins(),
+    allow_origin_regex=r"https://.*\.onrender\.com",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -252,6 +269,7 @@ def execute_agent_workflow(task_id: str, request_text: str, user_id: str):
             "errors": state_dict.get("errors", []),
             "updated_at": datetime.datetime.now(datetime.timezone.utc).isoformat()
         })
+        sync_firestore_task(TASK_STORE[task_id])
         logger.info(f"Task {task_id} finished with status: {TASK_STORE[task_id]['status']}")
 
     except Exception as e:
@@ -263,6 +281,20 @@ def execute_agent_workflow(task_id: str, request_text: str, user_id: str):
             "message": f"Fatal execution error: {str(e)}",
             "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat()
         })
+        sync_firestore_task(TASK_STORE[task_id])
+
+
+
+@app.get("/", tags=["Diagnostics"])
+def root_check():
+    """Root endpoint for status verification and Render health probes."""
+    return {
+        "status": "healthy",
+        "service": "multi-agent-backend",
+        "version": "1.0.0",
+        "environment": settings.ENVIRONMENT,
+        "docs": "/docs"
+    }
 
 
 @app.get("/health", response_model=HealthResponse, tags=["Diagnostics"])
@@ -317,13 +349,28 @@ def debug_rag():
 
 
 
+def sync_firestore_task(task_record: Dict[str, Any]):
+    """Safely synchronizes task state to Firebase Firestore."""
+    try:
+        from firebase_admin import firestore
+        db = firestore.client()
+        db.collection("tasks").document(task_record["task_id"]).set(task_record)
+    except Exception as e:
+        logger.debug(f"[Firestore] Task sync local only: {e}")
+
+
 @app.post("/api/tasks", status_code=status.HTTP_202_ACCEPTED, tags=["Tasks"])
-def create_task(submission: TaskSubmission, background_tasks: BackgroundTasks):
+def create_task(
+    submission: TaskSubmission,
+    background_tasks: BackgroundTasks,
+    current_user: Dict[str, Any] = Depends(get_current_authenticated_user)
+):
     """Submits a natural-language task for planning and execution."""
     task_id = str(uuid.uuid4())
+    caller_uid = current_user["uid"]
     task_record = {
         "task_id": task_id,
-        "user_id": submission.user_id,
+        "user_id": caller_uid,
         "original_request": submission.request,
         "status": "pending",
         "created_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
@@ -347,17 +394,24 @@ def create_task(submission: TaskSubmission, background_tasks: BackgroundTasks):
         "errors": []
     }
     TASK_STORE[task_id] = task_record
+    sync_firestore_task(task_record)
 
     # Schedule asynchronous execution in background
-    background_tasks.add_task(execute_agent_workflow, task_id, submission.request, submission.user_id)
+    background_tasks.add_task(execute_agent_workflow, task_id, submission.request, caller_uid)
 
     return {"task_id": task_id, "status": "accepted"}
 
 
 @app.get("/api/tasks", tags=["Tasks"])
-def list_tasks():
-    """Retrieves all tasks in history."""
-    return list(TASK_STORE.values())
+def list_tasks(current_user: Dict[str, Any] = Depends(get_current_authenticated_user)):
+    """Retrieves tasks in history isolated per authenticated user (admin sees all)."""
+    user_uid = current_user["uid"]
+    is_admin = current_user.get("is_admin", False)
+    all_tasks = list(TASK_STORE.values())
+    if is_admin:
+        return all_tasks
+    return [t for t in all_tasks if t.get("user_id") == user_uid]
+
 
 
 @app.get("/api/tasks/{task_id}", tags=["Tasks"])
@@ -570,12 +624,37 @@ async def upload_document(
         )
 
     verified_count = verification.get("searchable_chunks", indexed_count)
+
+    # Phase 5: Persistent External Storage (Cloudinary)
+    cloudinary_url = None
+    if settings.is_cloudinary_configured():
+        try:
+            import cloudinary
+            import cloudinary.uploader
+            cloudinary.config(
+                cloud_name=settings.CLOUDINARY_CLOUD_NAME,
+                api_key=settings.CLOUDINARY_API_KEY,
+                api_secret=settings.CLOUDINARY_API_SECRET,
+                secure=True
+            )
+            upload_res = cloudinary.uploader.upload(
+                content_bytes,
+                resource_type="raw",
+                public_id=f"rag_documents/{doc_id}_{filename}",
+                folder="rag_documents"
+            )
+            cloudinary_url = upload_res.get("secure_url") or upload_res.get("url")
+            logger.info(f"Persisted document '{filename}' to Cloudinary external storage: {cloudinary_url}")
+        except Exception as cl_err:
+            logger.warning(f"Cloudinary external upload deferred: {cl_err}")
+
     doc_record = {
         "document_id": doc_id,
         "owner_uid": owner_uid,
         "user_id": owner_uid,
         "filename": filename,
-        "storage_path": f"documents/{doc_id}_{filename}",
+        "storage_path": cloudinary_url or f"documents/{doc_id}_{filename}",
+        "cloudinary_url": cloudinary_url,
         "qdrant_collection": rag_service.collection_name,
         "chunk_count": verified_count,
         "indexing_status": "indexed",
@@ -1112,4 +1191,14 @@ def delete_document(
         pass
 
     return {"status": "deleted", "document_id": document_id}
+
+
+if __name__ == "__main__":
+    import uvicorn
+    # Render binds dynamic port via PORT environment variable; fallback to BACKEND_PORT
+    port = settings.effective_port
+    host = os.environ.get("HOST", settings.BACKEND_HOST)
+    logger.info(f"Binding Multi-Agent API server to {host}:{port}")
+    uvicorn.run("backend.app.main:app", host=host, port=port, reload=False)
+
 

@@ -5,6 +5,7 @@ services:
     env: python
     region: oregon
     plan: standard
+    healthCheckPath: /health
     buildCommand: "pip install -r requirements.txt"
     startCommand: "uvicorn backend.app.main:app --host 0.0.0.0 --port $PORT"
     envVars:
@@ -28,6 +29,10 @@ services:
         sync: false
       - key: CLOUDINARY_API_SECRET
         sync: false
+      - key: FIREBASE_PROJECT_ID
+        value: multi-agent-e8d98
+      - key: FIREBASE_SERVICE_ACCOUNT_JSON
+        sync: false
       - key: FRONTEND_ORIGIN
         sync: false
 
@@ -48,3 +53,15 @@ services:
           type: web
           name: multi-agent-backend
           property: host
+      - key: NEXT_PUBLIC_FIREBASE_API_KEY
+        sync: false
+      - key: NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN
+        value: multi-agent-e8d98.firebaseapp.com
+      - key: NEXT_PUBLIC_FIREBASE_PROJECT_ID
+        value: multi-agent-e8d98
+      - key: NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET
+        value: multi-agent-e8d98.firebasestorage.app
+      - key: NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID
+        value: "526659044247"
+      - key: NEXT_PUBLIC_FIREBASE_APP_ID
+        value: "1:526659044247:web:0d46a8cc574b1daac6fad2"
