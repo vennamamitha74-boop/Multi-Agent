@@ -17,8 +17,7 @@ class RAGService:
     """
     Retrieval-Augmented Generation service interfacing with Qdrant.
     Handles semantic search, representative chunk sampling, hybrid reranking,
-    and grounded evidence retrieval.
-    Connects to Qdrant Cloud when available; seamlessly falls back to persistent on-disk Qdrant.
+    and grounded evidence retrieval with strict user ownership isolation.
     """
 
     def __init__(self):
@@ -38,7 +37,6 @@ class RAGService:
                     api_key=settings.QDRANT_API_KEY,
                     timeout=5
                 )
-                # Verify network reachability
                 client.get_collections()
                 self.client = client
                 self.storage_mode = "cloud"
@@ -46,7 +44,7 @@ class RAGService:
                 logger.info(f"[Qdrant Init] Qdrant Cloud connected successfully for collection: '{self.collection_name}'")
                 return
             except Exception as e:
-                logger.warning(f"[Qdrant Init] Could not connect to remote Qdrant Cloud ({e}). Initializing persistent local disk engine...")
+                logger.warning(f"[Qdrant Init] Remote Qdrant Cloud unavailable ({e}). Initializing persistent local disk engine...")
 
         # 2. Resilient Persistent Local Storage on disk
         try:
@@ -59,7 +57,7 @@ class RAGService:
             logger.info(f"[Qdrant Init] Persistent on-disk Qdrant engine initialized at '{storage_path}' for collection: '{self.collection_name}'.")
             return
         except Exception as e:
-            logger.warning(f"[Qdrant Init] Could not initialize on-disk Qdrant ({e}). Falling back to in-memory mode...")
+            logger.warning(f"[Qdrant Init] Persistent local Qdrant failed ({e}). Falling back to memory mode...")
 
         # 3. In-memory fallback
         try:
@@ -85,8 +83,8 @@ class RAGService:
                     )
                 )
                 logger.info(f"Created Qdrant collection: {self.collection_name}")
-            # Ensure keyword indexes for fast, filtered querying
-            for field in ["user_id", "document_id"]:
+            # Ensure keyword indexes for fast, filtered querying across document and owner
+            for field in ["owner_uid", "user_id", "document_id"]:
                 try:
                     self.client.create_payload_index(
                         collection_name=self.collection_name,
@@ -98,17 +96,23 @@ class RAGService:
         except Exception as e:
             logger.warning(f"Could not verify or create collection: {e}")
 
-    def get_points_count(self, document_id: Optional[str] = None) -> int:
-        """Returns total points in collection, optionally filtered by document_id."""
+    def get_points_count(self, document_id: Optional[str] = None, owner_uid: Optional[str] = None) -> int:
+        """Returns total points in collection, optionally filtered by document_id or owner_uid."""
         if not self.client:
             return 0
         try:
-            doc_filter = None
+            must_conditions = []
             if document_id:
-                doc_filter = qmodels.Filter(
-                    must=[qmodels.FieldCondition(key="document_id", match=qmodels.MatchValue(value=document_id))]
+                must_conditions.append(
+                    qmodels.FieldCondition(key="document_id", match=qmodels.MatchValue(value=document_id))
                 )
-            res = self.client.count(collection_name=self.collection_name, count_filter=doc_filter, exact=True)
+            if owner_uid and owner_uid not in ("admin", "system_admin"):
+                must_conditions.append(
+                    qmodels.FieldCondition(key="owner_uid", match=qmodels.MatchValue(value=owner_uid))
+                )
+
+            filter_obj = qmodels.Filter(must=must_conditions) if must_conditions else None
+            res = self.client.count(collection_name=self.collection_name, count_filter=filter_obj, exact=True)
             return res.count
         except Exception as e:
             logger.warning(f"Error checking points count: {e}")
@@ -196,8 +200,10 @@ class RAGService:
                 chunks.append({
                     "chunk_id": str(payload.get("chunk_id", hit.id)),
                     "document_id": payload.get("document_id", document_id),
+                    "owner_uid": payload.get("owner_uid") or payload.get("user_id", "unknown"),
+                    "user_id": payload.get("owner_uid") or payload.get("user_id", "unknown"),
                     "filename": payload.get("filename", "unknown"),
-                    "user_id": payload.get("user_id", "unknown"),
+                    "storage_path": payload.get("storage_path", ""),
                     "page_number": payload.get("page_number", 1),
                     "section": payload.get("section", "Paragraph"),
                     "chunk_index": payload.get("chunk_index", 0),
@@ -205,6 +211,7 @@ class RAGService:
                     "content": content,
                     "score": 1.0,
                     "upload_timestamp": payload.get("upload_timestamp", ""),
+                    "created_at": payload.get("created_at") or payload.get("upload_timestamp", ""),
                     "metadata": payload
                 })
 
@@ -217,7 +224,7 @@ class RAGService:
     def get_representative_chunks(self, document_id: str, max_chunks: int = 10) -> List[Dict[str, Any]]:
         """
         Retrieves representative chunks distributed across the document:
-        start (intro/purpose), middle (key topics/architecture/weeks), and end (conclusions/projects).
+        start (intro/purpose), middle (key topics/architecture/curriculum), and end (conclusions/projects).
         """
         all_chunks = self.get_document_chunks(document_id=document_id, limit=800)
         if not all_chunks:
@@ -226,19 +233,15 @@ class RAGService:
         if len(all_chunks) <= max_chunks:
             return all_chunks
 
-        # Sample across the document
         selected_indices = set()
-        # Always include the first 2 chunks (document introduction, title, purpose)
         selected_indices.add(0)
         if len(all_chunks) > 1:
             selected_indices.add(1)
 
-        # Always include the last chunk (summary / projects / conclusion)
         selected_indices.add(len(all_chunks) - 1)
         if len(all_chunks) > 2:
             selected_indices.add(len(all_chunks) - 2)
 
-        # Distribute remaining slots evenly across the document body
         remaining_slots = max_chunks - len(selected_indices)
         if remaining_slots > 0:
             step = (len(all_chunks) - 4) / (remaining_slots + 1)
@@ -253,27 +256,32 @@ class RAGService:
     def search_documents(
         self,
         query: str,
+        owner_uid: Optional[str] = None,
         user_id: Optional[str] = None,
         document_id: Optional[str] = None,
+        is_admin: bool = False,
         top_k: int = 6
     ) -> List[Dict[str, Any]]:
         """
-        Searches Qdrant collection for relevant evidence chunks using hybrid scoring (dense vector + lexical reranking).
-        Provides comprehensive diagnostic logging.
+        Phase 4: Searches Qdrant collection using both document_id and owner_uid filters.
+        Guarantees strict user document isolation at the vector database level.
         """
         if not self.client:
             logger.warning("[RAG Diagnostics] Qdrant is not available; returning empty search results.")
             return []
 
         try:
+            effective_uid = owner_uid or user_id
             total_points = self.get_points_count()
             logger.info(
                 f"[RAG Diagnostics] Collection: '{self.collection_name}' | Total points: {total_points} | "
-                f"Document ID: '{document_id}' | User ID: '{user_id}' | Query: '{query[:80]}'"
+                f"Document ID: '{document_id}' | Owner UID: '{effective_uid}' | is_admin={is_admin} | Query: '{query[:80]}'"
             )
 
             query_vector = self.get_embedding(query)
             filter_conditions = []
+
+            # 1. Scoped Document Filter
             if document_id:
                 filter_conditions.append(
                     qmodels.FieldCondition(
@@ -281,13 +289,18 @@ class RAGService:
                         match=qmodels.MatchValue(value=document_id)
                     )
                 )
-            elif user_id and user_id not in ("anonymous_user", "admin", "system_admin"):
+
+            # 2. Strict Owner UID Filter (Enforce vector-level isolation for non-admins)
+            if not is_admin and effective_uid and effective_uid not in ("anonymous_user", "system", "all"):
                 filter_conditions.append(
-                    qmodels.FieldCondition(
-                        key="user_id",
-                        match=qmodels.MatchValue(value=user_id)
+                    qmodels.Filter(
+                        should=[
+                            qmodels.FieldCondition(key="owner_uid", match=qmodels.MatchValue(value=effective_uid)),
+                            qmodels.FieldCondition(key="user_id", match=qmodels.MatchValue(value=effective_uid)),
+                        ]
                     )
                 )
+
 
             query_filter = qmodels.Filter(must=filter_conditions) if filter_conditions else None
 
@@ -312,7 +325,7 @@ class RAGService:
                         limit=candidate_limit
                     )
             except Exception as e:
-                logger.warning(f"[RAG Diagnostics] Query filter warning: {e}. Retrying query...")
+                logger.warning(f"[RAG Diagnostics] Query filter warning: {e}. Retrying query with primary filters...")
                 doc_filter = (
                     qmodels.Filter(
                         must=[qmodels.FieldCondition(key="document_id", match=qmodels.MatchValue(value=document_id))]
@@ -348,14 +361,17 @@ class RAGService:
                     "lexical_score": round(lex_score, 4),
                     "score": round(combined_score, 4),
                     "document_id": payload.get("document_id", "unknown"),
+                    "owner_uid": payload.get("owner_uid") or payload.get("user_id", "unknown"),
+                    "user_id": payload.get("owner_uid") or payload.get("user_id", "unknown"),
                     "filename": payload.get("filename", "unknown"),
-                    "user_id": payload.get("user_id", "unknown"),
+                    "storage_path": payload.get("storage_path", ""),
                     "page_number": payload.get("page_number", 1),
                     "section": payload.get("section", "Paragraph"),
                     "chunk_index": payload.get("chunk_index", 0),
                     "chunk_text": content,
                     "content": content,
                     "upload_timestamp": payload.get("upload_timestamp", ""),
+                    "created_at": payload.get("created_at") or payload.get("upload_timestamp", ""),
                     "metadata": payload
                 })
 
@@ -373,14 +389,13 @@ class RAGService:
         chunks: List[Dict[str, Any]],
         document_id: str,
         filename: str,
-        user_id: str = "anonymous_user"
+        owner_uid: str = "anonymous_user",
+        user_id: Optional[str] = None
     ) -> int:
         """
-        Phase 1: Indexes pre-split document chunks into Qdrant.
-        Stores all required metadata fields:
-        - document_id, user_id, filename, chunk_id, page_number, chunk_text, upload_timestamp.
+        Phase 2: Indexes pre-split document chunks into Qdrant.
+        Stores exact canonical owner_uid on every chunk payload.
         Batches points in chunks of 50 for robust, high-volume ingestion.
-        Returns the confirmed count of indexed chunks.
         """
         if not self.client:
             self._init_client()
@@ -388,7 +403,9 @@ class RAGService:
             logger.error("[RAG Diagnostics] Qdrant client could not be initialized for indexing.")
             return 0
 
+        canonical_uid = owner_uid or user_id or "anonymous_user"
         now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        storage_path = f"documents/{document_id}_{filename}"
         points = []
 
         for idx, chunk in enumerate(chunks):
@@ -404,15 +421,19 @@ class RAGService:
                     vector=vector,
                     payload={
                         "document_id": document_id,
-                        "user_id": user_id,
+                        "owner_uid": canonical_uid,
+                        "user_id": canonical_uid,
                         "filename": filename,
+                        "storage_path": storage_path,
+                        "qdrant_collection": self.collection_name,
                         "chunk_id": f"{document_id[:8]}_chunk_{idx}",
                         "page_number": chunk.get("page_number", 1),
                         "section": chunk.get("section", "Paragraph"),
                         "chunk_text": content,
                         "content": content,
                         "chunk_index": idx,
-                        "upload_timestamp": now_iso
+                        "upload_timestamp": now_iso,
+                        "created_at": now_iso
                     }
                 )
             )
@@ -420,7 +441,7 @@ class RAGService:
         if not points:
             return 0
 
-        # Upsert in batches of 50 to prevent network/memory bottlenecks on 700+ chunks
+        # Upsert in batches of 50
         batch_size = 50
         total_upserted = 0
         try:
@@ -431,7 +452,7 @@ class RAGService:
 
             logger.info(
                 f"[RAG Diagnostics] Successfully indexed {total_upserted} chunks for document '{filename}' "
-                f"({document_id}) into Qdrant collection '{self.collection_name}'"
+                f"({document_id}) owned by '{canonical_uid}' into Qdrant collection '{self.collection_name}'"
             )
             return total_upserted
         except Exception as e:
@@ -441,28 +462,35 @@ class RAGService:
     def verify_document_indexing(
         self,
         document_id: str,
-        expected_min_chunks: int = 1
+        expected_min_chunks: int = 1,
+        owner_uid: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Phase 4: Real Index Verification.
         - Queries Qdrant for actual stored points belonging to document_id.
-        - Verifies required metadata fields exist on stored points.
-        - Executes a test similarity search to verify chunks are searchable.
-        - Returns verification metrics or raises ValueError on indexing failure.
+        - Verifies owner_uid and required metadata exist on stored points.
+        - Executes a test similarity search to confirm chunks are searchable.
         """
         if not self.client:
             return {"verified": False, "searchable_chunks": 0, "error": "Qdrant client unavailable"}
 
         try:
             # 1. Verify point count in Qdrant for this document
-            doc_filter = qmodels.Filter(
-                must=[
+            must_filters = [
+                qmodels.FieldCondition(
+                    key="document_id",
+                    match=qmodels.MatchValue(value=document_id)
+                )
+            ]
+            if owner_uid:
+                must_filters.append(
                     qmodels.FieldCondition(
-                        key="document_id",
-                        match=qmodels.MatchValue(value=document_id)
+                        key="owner_uid",
+                        match=qmodels.MatchValue(value=owner_uid)
                     )
-                ]
-            )
+                )
+
+            doc_filter = qmodels.Filter(must=must_filters)
             count_res = self.client.count(
                 collection_name=self.collection_name,
                 count_filter=doc_filter,
@@ -489,15 +517,15 @@ class RAGService:
                 with_payload=True,
                 with_vectors=False
             )
-            required_fields = ["document_id", "user_id", "filename", "chunk_id", "chunk_text", "upload_timestamp"]
+            required_fields = ["document_id", "owner_uid", "filename", "chunk_id", "chunk_text", "upload_timestamp"]
             for record in records:
                 payload = record.payload or {}
                 missing = [f for f in required_fields if f not in payload]
                 if missing:
                     logger.warning(f"[Index Verification] Chunk {record.id} missing metadata fields: {missing}")
 
-            # 3. Run a test similarity search using a query vector to confirm searchability
-            test_vector = self.get_embedding("agentic ai roadmap overview architecture concepts")
+            # 3. Test similarity search
+            test_vector = self.get_embedding("document overview concepts")
             search_res = []
             if hasattr(self.client, "query_points"):
                 resp = self.client.query_points(

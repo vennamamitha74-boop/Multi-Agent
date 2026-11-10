@@ -53,6 +53,8 @@ import {
   X,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
+import { getAuthToken } from "@/lib/firebase";
+
 
 interface Subtask {
   id: string;
@@ -292,16 +294,30 @@ export default function Home() {
       .catch(console.error);
   };
 
-  const loadDocuments = () => {
-    fetch("/api/documents")
-      .then((res) => res.json())
-      .then((data) => {
+  const loadDocuments = async () => {
+    try {
+      const token = await getAuthToken(currentUser);
+      const res = await fetch("/api/documents", {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "X-User-Id": currentUser,
+        },
+      });
+      if (res.ok) {
+        const data = await res.json();
         if (Array.isArray(data)) {
           setDocuments(data);
         }
-      })
-      .catch(console.error);
+      }
+    } catch (err) {
+      console.error("Failed to load documents:", err);
+    }
   };
+
+  // Re-fetch documents whenever active authenticated user changes
+  useEffect(() => {
+    loadDocuments();
+  }, [currentUser]);
 
   // Submit Task Request
   const handleSubmitTask = async (e: React.FormEvent) => {
@@ -310,9 +326,14 @@ export default function Home() {
 
     setIsSubmitting(true);
     try {
+      const token = await getAuthToken(currentUser);
       const res = await fetch("/api/tasks", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+          "X-User-Id": currentUser,
+        },
         body: JSON.stringify({
           request: prompt,
           user_id: currentUser,
@@ -345,8 +366,13 @@ export default function Home() {
     formData.append("file", uploadFile);
 
     try {
+      const token = await getAuthToken(currentUser);
       const res = await fetch("/api/documents/upload", {
         method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "X-User-Id": currentUser,
+        },
         body: formData,
       });
       if (res.ok) {
@@ -374,18 +400,27 @@ export default function Home() {
   const handleDeleteDocument = async (docId: string, filename: string) => {
     if (!confirm(`Permanently remove "${filename}" and its vector chunks from Qdrant?`)) return;
     try {
-      const res = await fetch(`/api/documents/${docId}`, { method: "DELETE" });
+      const token = await getAuthToken(currentUser);
+      const res = await fetch(`/api/documents/${docId}`, {
+        method: "DELETE",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "X-User-Id": currentUser,
+        },
+      });
       if (res.ok) {
         setDocuments((prev) => prev.filter((d) => d.document_id !== docId));
         if (selectedDocIdForQa === docId) setSelectedDocIdForQa("all");
       } else {
-        setDocuments((prev) => prev.filter((d) => d.document_id !== docId));
+        const err = await res.json().catch(() => ({}));
+        alert(err.detail || "Could not delete document.");
       }
     } catch (err) {
       console.error("Delete error:", err);
       setDocuments((prev) => prev.filter((d) => d.document_id !== docId));
     }
   };
+
 
   // Retry Failed Task
   const handleRetryTask = async (taskId: string) => {
@@ -468,9 +503,14 @@ export default function Home() {
         answer: h.answer,
       }));
 
+      const token = await getAuthToken(currentUser);
       const res = await fetch("/api/documents/query", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+          "X-User-Id": currentUser,
+        },
         body: JSON.stringify({
           query: queryToUse,
           document_id: selectedDocIdForQa !== "all" ? selectedDocIdForQa : null,
@@ -501,8 +541,26 @@ export default function Home() {
         setRagHistory((prev) => [newEntry, ...prev]);
         setRagQuestion("");
       } else {
-        const err = await res.json();
-        setRagError(err.detail || "Query failed. Please verify the document index.");
+        const err = await res.json().catch(() => ({}));
+        const errMsg = err.detail || "Query failed. Please verify the document index.";
+        setRagError(errMsg);
+        if (res.status === 403) {
+          const selectedDoc = documents.find((d) => d.document_id === selectedDocIdForQa);
+          const targetDocName = selectedDoc ? selectedDoc.filename : "Protected Document";
+          const newEntry = {
+            id: String(Date.now()),
+            document_id: selectedDocIdForQa !== "all" ? selectedDocIdForQa : undefined,
+            document_name: targetDocName,
+            question: queryToUse,
+            answer: errMsg,
+            is_grounded: false,
+            intent: "isolated",
+            citations: [],
+            evidence_count: 0,
+            timestamp: new Date().toLocaleTimeString(),
+          };
+          setRagHistory((prev) => [newEntry, ...prev]);
+        }
       }
     } catch (err: any) {
       console.error("RAG Query error:", err);
@@ -510,6 +568,7 @@ export default function Home() {
     } finally {
       setIsSearchingRag(false);
     }
+
   };
 
   // Admin User Status Toggle
@@ -1305,13 +1364,15 @@ export default function Home() {
               <form onSubmit={handleSubmitTask} className="space-y-6">
                 <div className="rounded-lg bg-[#08282A] border border-[#1C5052] p-5 space-y-4">
                   <div className="flex items-center justify-between">
-                    <label className="text-xs font-semibold text-[#BDDED6] uppercase tracking-wider">
+                    <label htmlFor="taskPrompt" className="text-xs font-semibold text-[#BDDED6] uppercase tracking-wider">
                       Task Specification & Objective
                     </label>
                     <span className="text-[11px] text-slate-400 font-mono">{prompt.length} characters</span>
                   </div>
 
                   <textarea
+                    id="taskPrompt"
+                    name="taskPrompt"
                     rows={6}
                     value={prompt}
                     onChange={(e) => setPrompt(e.target.value)}
@@ -1345,10 +1406,12 @@ export default function Home() {
                     {/* Verification Rigor Selector */}
                     <div className="p-3 rounded bg-[#1C5052] border border-[#BDDED6]/20 flex items-center justify-between">
                       <div>
-                        <span className="font-medium text-white block">Verification Rigor</span>
+                        <label htmlFor="verificationRigor" className="font-medium text-white block">Verification Rigor</label>
                         <span className="text-[10px] text-slate-300 block">Audit gate standard</span>
                       </div>
                       <select
+                        id="verificationRigor"
+                        name="verificationRigor"
                         value={verificationRigor}
                         onChange={(e) => setVerificationRigor(e.target.value as any)}
                         className="bg-[#08282A] border border-[#1C5052] text-[#BDDED6] text-xs rounded px-2 py-1 outline-none font-medium"
@@ -1361,10 +1424,12 @@ export default function Home() {
                     {/* Execution Pipeline Selector */}
                     <div className="p-3 rounded bg-[#1C5052] border border-[#BDDED6]/20 flex items-center justify-between">
                       <div>
-                        <span className="font-medium text-white block">Execution Pipeline</span>
+                        <label htmlFor="executionMode" className="font-medium text-white block">Execution Pipeline</label>
                         <span className="text-[10px] text-slate-300 block">5-agent coordination</span>
                       </div>
                       <select
+                        id="executionMode"
+                        name="executionMode"
                         value={executionMode}
                         onChange={(e) => setExecutionMode(e.target.value as any)}
                         className="bg-[#08282A] border border-[#1C5052] text-[#BDDED6] text-xs rounded px-2 py-1 outline-none font-medium"
@@ -1374,6 +1439,7 @@ export default function Home() {
                       </select>
                     </div>
                   </div>
+
 
                   {/* Submit Button Bar */}
                   <div className="flex items-center justify-between pt-3 border-t border-[#1C5052]">
@@ -1418,12 +1484,16 @@ export default function Home() {
                 </div>
 
                 <form onSubmit={handleUploadDocument} className="flex flex-col sm:flex-row items-center gap-3">
+                  <label htmlFor="taskDocumentUpload" className="sr-only">Upload Supporting Document</label>
                   <input
+                    id="taskDocumentUpload"
+                    name="taskDocumentUpload"
                     type="file"
                     accept=".pdf,.docx,.txt"
                     onChange={(e) => setUploadFile(e.target.files?.[0] || null)}
                     className="block w-full text-xs text-slate-300 file:mr-3 file:py-1.5 file:px-3 file:rounded file:border-0 file:text-xs file:font-medium file:bg-[#1C5052] file:text-[#BDDED6] hover:file:bg-[#177D81] file:cursor-pointer cursor-pointer bg-[#0F1515] p-2 rounded border border-[#1C5052]"
                   />
+
                   <button
                     type="submit"
                     disabled={isUploading || !uploadFile}
@@ -1621,12 +1691,15 @@ export default function Home() {
                         Live Execution Event Stream ({currentTask.events?.length || 0})
                       </h3>
                       <div className="flex items-center space-x-2">
-                        <span className="text-[11px] text-slate-400">Stage Filter:</span>
+                        <label htmlFor="eventFilterStage" className="text-[11px] text-slate-400">Stage Filter:</label>
                         <select
+                          id="eventFilterStage"
+                          name="eventFilterStage"
                           value={eventFilterStage}
                           onChange={(e) => setEventFilterStage(e.target.value)}
                           className="bg-[#0F1515] border border-[#1C5052] text-xs text-[#BDDED6] rounded px-2 py-1 outline-none font-medium"
                         >
+
                           <option value="all">All Stages</option>
                           <option value="workflow">Workflow</option>
                           <option value="planner">Planner</option>
@@ -1872,12 +1945,16 @@ export default function Home() {
                 <form onSubmit={handleUploadDocument} className="space-y-4">
                   <div className="border border-dashed border-[#1C5052] rounded-lg p-5 text-center hover:border-[#177D81] transition-colors bg-[#0F1515]">
                     <Upload className="w-7 h-7 mx-auto mb-2 text-[#BDDED6]" />
+                    <label htmlFor="ragDocumentUpload" className="sr-only">Ingest Knowledge Document</label>
                     <input
+                      id="ragDocumentUpload"
+                      name="ragDocumentUpload"
                       type="file"
                       accept=".pdf,.docx,.txt"
                       onChange={(e) => setUploadFile(e.target.files?.[0] || null)}
                       className="block w-full text-xs text-slate-300 file:mr-3 file:py-1.5 file:px-3 file:rounded file:border-0 file:text-xs file:font-semibold file:bg-[#177D81] file:text-white hover:file:bg-[#1B8E93] cursor-pointer"
                     />
+
                     <p className="text-[11px] text-slate-400 mt-2">
                       Files are normalized, split into 500-character overlapping chunks, embedded, and indexed into Qdrant.
                     </p>
@@ -1935,8 +2012,10 @@ export default function Home() {
 
                   {/* Document Scope Selector */}
                   <div className="flex items-center space-x-2">
-                    <span className="text-[11px] text-slate-400 whitespace-nowrap">Target Document:</span>
+                    <label htmlFor="targetDocument" className="text-[11px] text-slate-400 whitespace-nowrap">Target Document:</label>
                     <select
+                      id="targetDocument"
+                      name="targetDocument"
                       value={selectedDocIdForQa}
                       onChange={(e) => setSelectedDocIdForQa(e.target.value)}
                       className="bg-[#0F1515] border border-[#1C5052] text-[#BDDED6] rounded px-2.5 py-1.5 text-xs outline-none focus:border-[#177D81] max-w-[240px] truncate"
@@ -1951,6 +2030,7 @@ export default function Home() {
                       ))}
                     </select>
                   </div>
+
                 </div>
 
                 {/* Warning if selected document has 0 chunks */}
@@ -2003,13 +2083,17 @@ export default function Home() {
 
                 {/* Natural-Language Query Form */}
                 <form onSubmit={(e) => handleRagSearch(e)} className="flex gap-2">
+                  <label htmlFor="documentQuestion" className="sr-only">Document Question</label>
                   <input
+                    id="documentQuestion"
+                    name="documentQuestion"
                     type="text"
                     value={ragQuestion}
                     onChange={(e) => setRagQuestion(e.target.value)}
                     placeholder="Ask an overview question, query specific facts, or request follow-up explanations..."
                     className="flex-1 bg-[#0F1515] border border-[#1C5052] rounded px-3 py-2 text-xs text-white placeholder:text-slate-500 outline-none focus:border-[#177D81]"
                   />
+
                   <button
                     type="submit"
                     disabled={isSearchingRag || !ragQuestion.trim()}
@@ -2201,7 +2285,10 @@ export default function Home() {
               <div className="rounded-lg bg-[#08282A] border border-[#1C5052] p-4 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs">
                 <div className="relative w-full sm:w-80">
                   <Search className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" />
+                  <label htmlFor="docSearchQuery" className="sr-only">Search documents by filename</label>
                   <input
+                    id="docSearchQuery"
+                    name="docSearchQuery"
                     type="text"
                     value={docSearchQuery}
                     onChange={(e) => setDocSearchQuery(e.target.value)}
@@ -2210,12 +2297,15 @@ export default function Home() {
                   />
                 </div>
                 <div className="flex items-center space-x-2 w-full sm:w-auto">
-                  <span className="text-slate-400 text-xs">File Type:</span>
+                  <label htmlFor="docFilterType" className="text-slate-400 text-xs">File Type:</label>
                   <select
+                    id="docFilterType"
+                    name="docFilterType"
                     value={docFilterType}
                     onChange={(e) => setDocFilterType(e.target.value)}
                     className="bg-[#0F1515] border border-[#1C5052] text-[#BDDED6] rounded px-3 py-1.5 text-xs outline-none font-medium"
                   >
+
                     <option value="all">All Formats</option>
                     <option value="pdf">PDF Documents</option>
                     <option value="docx">Word (DOCX)</option>
@@ -2377,7 +2467,10 @@ export default function Home() {
               <div className="rounded-lg bg-[#08282A] border border-[#1C5052] p-4 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs">
                 <div className="relative w-full sm:w-80">
                   <Search className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" />
+                  <label htmlFor="historySearch" className="sr-only">Search tasks by prompt or ID</label>
                   <input
+                    id="historySearch"
+                    name="historySearch"
                     type="text"
                     value={historySearch}
                     onChange={(e) => {
@@ -2389,8 +2482,10 @@ export default function Home() {
                   />
                 </div>
                 <div className="flex items-center space-x-2 w-full sm:w-auto">
-                  <span className="text-slate-400 text-xs">Status:</span>
+                  <label htmlFor="historyStatusFilter" className="text-slate-400 text-xs">Status:</label>
                   <select
+                    id="historyStatusFilter"
+                    name="historyStatusFilter"
                     value={historyStatusFilter}
                     onChange={(e) => {
                       setHistoryStatusFilter(e.target.value);
@@ -2398,6 +2493,7 @@ export default function Home() {
                     }}
                     className="bg-[#0F1515] border border-[#1C5052] text-[#BDDED6] rounded px-3 py-1.5 text-xs outline-none font-medium"
                   >
+
                     <option value="all">All Statuses</option>
                     <option value="completed">Completed</option>
                     <option value="running">In Progress</option>
@@ -2534,8 +2630,10 @@ export default function Home() {
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
                   <div>
-                    <label className="text-slate-300 block mb-1">User Identifier</label>
+                    <label htmlFor="userIdentifier" className="text-slate-300 block mb-1">User Identifier</label>
                     <input
+                      id="userIdentifier"
+                      name="userIdentifier"
                       type="text"
                       value={currentUser}
                       onChange={(e) => setCurrentUser(e.target.value)}
@@ -2543,8 +2641,10 @@ export default function Home() {
                     />
                   </div>
                   <div>
-                    <label className="text-slate-300 block mb-1">Role Permission</label>
+                    <label htmlFor="userRolePermission" className="text-slate-300 block mb-1">Role Permission</label>
                     <select
+                      id="userRolePermission"
+                      name="userRolePermission"
                       value={isAdmin ? "admin" : "standard"}
                       onChange={(e) => setIsAdmin(e.target.value === "admin")}
                       className="w-full bg-[#0F1515] border border-[#1C5052] rounded px-3 py-2 text-xs text-[#BDDED6] outline-none focus:border-[#177D81] font-medium"
@@ -2554,6 +2654,7 @@ export default function Home() {
                     </select>
                   </div>
                 </div>
+
               </div>
 
               {/* System and Connected AI Infrastructure */}
