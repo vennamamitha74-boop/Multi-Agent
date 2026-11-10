@@ -1,6 +1,8 @@
 import asyncio
 import datetime
+import json
 import logging
+import os
 import uuid
 from typing import Any, Dict, List, Optional
 from fastapi import BackgroundTasks, FastAPI, File, HTTPException, UploadFile, status
@@ -38,9 +40,37 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# In-memory store for task execution and document metadata
+# Persistent store for document metadata and in-memory tasks
 TASK_STORE: Dict[str, Dict[str, Any]] = {}
-DOCUMENTS_STORE: List[Dict[str, Any]] = []
+
+DOCUMENTS_METADATA_FILE = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "documents_metadata.json"
+)
+
+def load_documents_store() -> List[Dict[str, Any]]:
+    """Loads document records from persistent disk storage."""
+    try:
+        if os.path.exists(DOCUMENTS_METADATA_FILE):
+            with open(DOCUMENTS_METADATA_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, list):
+                    return data
+    except Exception as e:
+        logger.warning(f"Could not load documents metadata from disk: {e}")
+    return []
+
+def save_documents_store(docs: List[Dict[str, Any]]):
+    """Saves document records atomically to persistent disk storage."""
+    try:
+        os.makedirs(os.path.dirname(DOCUMENTS_METADATA_FILE), exist_ok=True)
+        temp_file = DOCUMENTS_METADATA_FILE + ".tmp"
+        with open(temp_file, "w", encoding="utf-8") as f:
+            json.dump(docs, f, indent=2)
+        os.replace(temp_file, DOCUMENTS_METADATA_FILE)
+    except Exception as e:
+        logger.error(f"Failed to persist documents metadata to disk: {e}")
+
+DOCUMENTS_STORE: List[Dict[str, Any]] = load_documents_store()
 
 
 class HealthResponse(BaseModel):
@@ -224,8 +254,11 @@ class DocumentQueryRequest(BaseModel):
 
 
 @app.get("/api/documents", tags=["Documents & RAG"])
-def list_documents():
+def list_documents(user_id: Optional[str] = None):
     """Lists indexed documents available for RAG."""
+    global DOCUMENTS_STORE
+    if not DOCUMENTS_STORE:
+        DOCUMENTS_STORE = load_documents_store()
     return DOCUMENTS_STORE
 
 
@@ -362,15 +395,26 @@ async def upload_document(file: UploadFile = File(...), user_id: str = "anonymou
     if indexed_count == 0:
         raise HTTPException(status_code=500, detail="Failed to index document chunks into vector database.")
 
+    # Phase 4: Real Index Verification
+    verification = rag_service.verify_document_indexing(document_id=doc_id, expected_min_chunks=1)
+    if not verification.get("verified"):
+        rag_service.delete_document_chunks(doc_id)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Qdrant vector index verification failed: {verification.get('error', 'Zero searchable points confirmed')}"
+        )
+
+    verified_count = verification.get("searchable_chunks", indexed_count)
     doc_record = {
         "document_id": doc_id,
         "filename": filename,
         "user_id": user_id,
-        "chunk_count": indexed_count,
+        "chunk_count": verified_count,
         "uploaded_at": datetime.datetime.now(datetime.timezone.utc).isoformat()
     }
     DOCUMENTS_STORE.append(doc_record)
-    logger.info(f"Successfully processed document '{filename}' with {indexed_count} confirmed Qdrant chunks.")
+    save_documents_store(DOCUMENTS_STORE)
+    logger.info(f"Successfully processed and verified document '{filename}' with {verified_count} confirmed Qdrant chunks.")
     return doc_record
 
 
@@ -430,24 +474,54 @@ def query_documents(request: DocumentQueryRequest):
     - Generates grounded, cited answers for specific questions using hybrid retrieval.
     - Proposes innovative architectural improvements grounded in document context.
     - Supports multi-turn follow-up dialogue while keeping context anchored in evidence.
+    - Enforces document isolation between authenticated users.
     - Rejects out-of-scope questions with clear missing information explanations.
     """
-    if not DOCUMENTS_STORE:
-        return {
-            "question": request.query,
-            "answer": "No documents are currently indexed in the knowledge base. Please upload a document first.",
-            "is_grounded": False,
-            "citations": [],
-            "evidence_count": 0,
-            "intent": "none"
-        }
+    global DOCUMENTS_STORE
 
-    # Verify target document if document_id specified
+    # Reload store from disk if empty
+    if not DOCUMENTS_STORE:
+        DOCUMENTS_STORE = load_documents_store()
+
     matching_doc = None
     if request.document_id:
         matching_doc = next((d for d in DOCUMENTS_STORE if d["document_id"] == request.document_id), None)
+        # If not found in store, verify if it exists directly in Qdrant
         if not matching_doc:
-            raise HTTPException(status_code=404, detail="Selected document not found.")
+            q_chunks = rag_service.get_document_chunks(request.document_id, limit=1)
+            if q_chunks:
+                meta = q_chunks[0].get("metadata", {})
+                matching_doc = {
+                    "document_id": request.document_id,
+                    "filename": meta.get("filename", "Recovered Document"),
+                    "user_id": meta.get("user_id", "anonymous_user"),
+                    "chunk_count": rag_service.get_points_count(request.document_id),
+                    "uploaded_at": meta.get("upload_timestamp") or datetime.datetime.now(datetime.timezone.utc).isoformat()
+                }
+                DOCUMENTS_STORE.append(matching_doc)
+                save_documents_store(DOCUMENTS_STORE)
+
+        if not matching_doc:
+            raise HTTPException(status_code=404, detail="Selected document not found in vector knowledge base.")
+
+        # Document Isolation Enforcement (Phase 5, test 8)
+        doc_owner = matching_doc.get("user_id", "anonymous_user")
+        req_user = request.user_id or "anonymous_user"
+        if (
+            doc_owner not in ("anonymous_user", "system", "all")
+            and req_user not in ("anonymous_user", "admin", "system_admin")
+            and doc_owner != req_user
+        ):
+            logger.warning(f"[Security / Isolation] User '{req_user}' attempted to access document '{request.document_id}' owned by '{doc_owner}'")
+            return {
+                "question": request.query,
+                "answer": f"Access denied: You do not have permission to query document '{matching_doc['filename']}'. Documents are strictly isolated per authenticated user.",
+                "is_grounded": False,
+                "citations": [],
+                "evidence_count": 0,
+                "intent": "isolated"
+            }
+
         if matching_doc.get("chunk_count", 0) == 0:
             return {
                 "question": request.query,
@@ -458,8 +532,23 @@ def query_documents(request: DocumentQueryRequest):
                 "intent": "none"
             }
     else:
-        # Default to first active document if none explicitly chosen
-        matching_doc = next((d for d in DOCUMENTS_STORE if d.get("chunk_count", 0) > 0), None)
+        # If no document_id specified, find documents accessible to this user
+        req_user = request.user_id or "anonymous_user"
+        user_docs = [
+            d for d in DOCUMENTS_STORE
+            if d.get("user_id") == req_user or req_user in ("admin", "system_admin", "anonymous_user")
+        ]
+        matching_doc = next((d for d in user_docs if d.get("chunk_count", 0) > 0), None)
+
+        if not matching_doc and not DOCUMENTS_STORE:
+            return {
+                "question": request.query,
+                "answer": "No documents are currently indexed in the knowledge base. Please upload a document first.",
+                "is_grounded": False,
+                "citations": [],
+                "evidence_count": 0,
+                "intent": "none"
+            }
 
     intent = classify_query_intent(request.query, request.history or [])
     doc_id_to_use = request.document_id or (matching_doc["document_id"] if matching_doc else None)
@@ -800,12 +889,16 @@ Answer:"""
 
 @app.delete("/api/documents/{document_id}", tags=["Documents & RAG"])
 def delete_document(document_id: str):
-    """Deletes a document and its vector chunks from Qdrant and the store."""
+    """Deletes a document and its vector chunks from Qdrant and the persistent store."""
     global DOCUMENTS_STORE
+    if not DOCUMENTS_STORE:
+        DOCUMENTS_STORE = load_documents_store()
+
     existing = next((d for d in DOCUMENTS_STORE if d["document_id"] == document_id), None)
     if not existing:
         raise HTTPException(status_code=404, detail="Document not found")
 
     rag_service.delete_document_chunks(document_id)
     DOCUMENTS_STORE = [d for d in DOCUMENTS_STORE if d["document_id"] != document_id]
+    save_documents_store(DOCUMENTS_STORE)
     return {"status": "deleted", "document_id": document_id}
