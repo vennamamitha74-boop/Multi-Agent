@@ -44,9 +44,18 @@ def init_firebase_admin():
             cred_dict = json.loads(settings.FIREBASE_SERVICE_ACCOUNT_JSON)
             cred = credentials.Certificate(cred_dict)
             logger.info("[Firebase Admin] Initializing with service account JSON.")
-        elif settings.FIREBASE_SERVICE_ACCOUNT_PATH and os.path.exists(settings.FIREBASE_SERVICE_ACCOUNT_PATH):
-            cred = credentials.Certificate(settings.FIREBASE_SERVICE_ACCOUNT_PATH)
-            logger.info(f"[Firebase Admin] Initializing with service account file at {settings.FIREBASE_SERVICE_ACCOUNT_PATH}.")
+        elif settings.FIREBASE_SERVICE_ACCOUNT_PATH:
+            from app.config import BACKEND_DIR, ROOT_DIR
+            p = settings.FIREBASE_SERVICE_ACCOUNT_PATH
+            resolved_path = None
+            for candidate in [p, str(ROOT_DIR / p), str(BACKEND_DIR / p)]:
+                if os.path.exists(candidate):
+                    resolved_path = candidate
+                    break
+
+            if resolved_path:
+                cred = credentials.Certificate(resolved_path)
+                logger.info(f"[Firebase Admin] Initializing with service account file at {resolved_path}.")
 
         project_id = settings.FIREBASE_PROJECT_ID or "multi-agent-e8d98"
         if cred:
