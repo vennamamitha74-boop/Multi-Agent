@@ -48,11 +48,10 @@ services:
     envVars:
       - key: NODE_VERSION
         value: 20.18.0
+      - key: NEXT_PUBLIC_API_URL
+        value: https://multi-agent-backend-06ve.onrender.com
       - key: NEXT_PUBLIC_BACKEND_URL
-        fromService:
-          type: web
-          name: multi-agent-backend
-          property: host
+        value: https://multi-agent-backend-06ve.onrender.com
       - key: NEXT_PUBLIC_FIREBASE_API_KEY
         sync: false
       - key: NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN

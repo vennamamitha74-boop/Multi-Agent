@@ -1,6 +1,9 @@
 /** @type {import('next').NextConfig} */
 function resolveBackendUrl() {
-  let url = process.env.NEXT_PUBLIC_BACKEND_URL || "http://127.0.0.1:8000";
+  let url =
+    process.env.NEXT_PUBLIC_API_URL ||
+    process.env.NEXT_PUBLIC_BACKEND_URL ||
+    "https://multi-agent-backend-06ve.onrender.com";
   url = url.trim().replace(/\/+$/, "");
   if (!url.startsWith("http://") && !url.startsWith("https://")) {
     url = `https://${url}`;

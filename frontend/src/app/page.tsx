@@ -54,6 +54,7 @@ import {
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import { getAuthToken } from "@/lib/firebase";
+import { api } from "@/lib/api";
 
 
 interface Subtask {
@@ -256,58 +257,43 @@ export default function Home() {
   useEffect(() => {
     if (!currentTaskId) return;
 
-    const interval = setInterval(() => {
-      fetch(`/api/tasks/${currentTaskId}`)
-        .then((res) => {
-          if (!res.ok) throw new Error("Task fetch failed");
-          return res.json();
-        })
-        .then((data: TaskRecord) => {
-          setCurrentTask(data);
-          if (["completed", "failed", "partially_completed"].includes(data.status)) {
-            clearInterval(interval);
-            loadTasks();
-          }
-        })
-        .catch(console.error);
+    const interval = setInterval(async () => {
+      const res = await api.getTask(currentTaskId, currentUser);
+      if (res.ok && res.data) {
+        const data: TaskRecord = res.data;
+        setCurrentTask(data);
+        if (["completed", "failed", "partially_completed"].includes(data.status)) {
+          clearInterval(interval);
+          loadTasks();
+        }
+      }
     }, 2000);
 
     return () => clearInterval(interval);
-  }, [currentTaskId]);
+  }, [currentTaskId, currentUser]);
 
-  const fetchReadyStatus = () => {
-    fetch("/ready")
-      .then((res) => res.json())
-      .then((data) => setSystemReady(data))
-      .catch(() => setSystemReady({ ready: false, components: {} }));
+  const fetchReadyStatus = async () => {
+    const res = await api.getReady();
+    if (res.ok && res.data) {
+      setSystemReady(res.data);
+    } else {
+      setSystemReady({ ready: false, components: {} });
+    }
   };
 
-  const loadTasks = () => {
-    fetch("/api/tasks")
-      .then((res) => res.json())
-      .then((data) => {
-        if (Array.isArray(data)) {
-          setTasksList([...data].reverse());
-          setLastRefreshed(new Date().toLocaleTimeString());
-        }
-      })
-      .catch(console.error);
+  const loadTasks = async () => {
+    const res = await api.getTasks(currentUser);
+    if (res.ok && Array.isArray(res.data)) {
+      setTasksList([...res.data].reverse());
+      setLastRefreshed(new Date().toLocaleTimeString());
+    }
   };
 
   const loadDocuments = async () => {
     try {
-      const token = await getAuthToken(currentUser);
-      const res = await fetch("/api/documents", {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "X-User-Id": currentUser,
-        },
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (Array.isArray(data)) {
-          setDocuments(data);
-        }
+      const res = await api.getDocuments(currentUser);
+      if (res.ok && Array.isArray(res.data)) {
+        setDocuments(res.data);
       }
     } catch (err) {
       console.error("Failed to load documents:", err);
@@ -326,29 +312,26 @@ export default function Home() {
 
     setIsSubmitting(true);
     try {
-      const token = await getAuthToken(currentUser);
-      const res = await fetch("/api/tasks", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-          "X-User-Id": currentUser,
-        },
-        body: JSON.stringify({
+      const res = await api.submitTask(
+        {
           request: prompt,
           user_id: currentUser,
           document_ids: enableRagGrounding ? documents.map((d) => d.document_id) : [],
-        }),
-      });
+        },
+        currentUser
+      );
 
-      if (res.ok) {
-        const data = await res.json();
-        setCurrentTaskId(data.task_id);
+      if (res.ok && res.data?.task_id) {
+        setCurrentTaskId(res.data.task_id);
         setActiveTab("execution");
         loadTasks();
+      } else {
+        const errorMsg = typeof res.data === "string" ? res.data : (res.data?.detail || "Task submission failed.");
+        alert(errorMsg);
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error("Task submission error:", err);
+      alert(err?.message || "Error submitting task.");
     } finally {
       setIsSubmitting(false);
     }
@@ -362,21 +345,11 @@ export default function Home() {
     setIsUploading(true);
     setUploadSuccessMessage(null);
     setUploadError(null);
-    const formData = new FormData();
-    formData.append("file", uploadFile);
 
     try {
-      const token = await getAuthToken(currentUser);
-      const res = await fetch("/api/documents/upload", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "X-User-Id": currentUser,
-        },
-        body: formData,
-      });
-      if (res.ok) {
-        const doc: DocumentRecord = await res.json();
+      const res = await api.uploadDocument(uploadFile, currentUser);
+      if (res.ok && res.data) {
+        const doc: DocumentRecord = res.data;
         setUploadFile(null);
         if (doc.chunk_count > 0) {
           setUploadSuccessMessage(`Successfully indexed "${doc.filename}" with ${doc.chunk_count} verified vector chunks in Qdrant.`);
@@ -385,8 +358,8 @@ export default function Home() {
         }
         loadDocuments();
       } else {
-        const err = await res.json();
-        setUploadError(err.detail || "Upload and vector indexing failed.");
+        const errMessage = typeof res.data === "string" ? res.data : (res.data?.detail || "Upload and vector indexing failed.");
+        setUploadError(errMessage);
       }
     } catch (err: any) {
       console.error("Upload error:", err);
@@ -400,20 +373,13 @@ export default function Home() {
   const handleDeleteDocument = async (docId: string, filename: string) => {
     if (!confirm(`Permanently remove "${filename}" and its vector chunks from Qdrant?`)) return;
     try {
-      const token = await getAuthToken(currentUser);
-      const res = await fetch(`/api/documents/${docId}`, {
-        method: "DELETE",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "X-User-Id": currentUser,
-        },
-      });
+      const res = await api.deleteDocument(docId, currentUser);
       if (res.ok) {
         setDocuments((prev) => prev.filter((d) => d.document_id !== docId));
         if (selectedDocIdForQa === docId) setSelectedDocIdForQa("all");
       } else {
-        const err = await res.json().catch(() => ({}));
-        alert(err.detail || "Could not delete document.");
+        const errMessage = typeof res.data === "string" ? res.data : (res.data?.detail || "Could not delete document.");
+        alert(errMessage);
       }
     } catch (err) {
       console.error("Delete error:", err);
@@ -421,13 +387,10 @@ export default function Home() {
     }
   };
 
-
   // Retry Failed Task
   const handleRetryTask = async (taskId: string) => {
     try {
-      const res = await fetch(`/api/tasks/${taskId}/retry`, {
-        method: "POST",
-      });
+      const res = await api.retryTask(taskId, currentUser);
       if (res.ok) {
         setCurrentTaskId(taskId);
         setActiveTab("execution");
@@ -503,25 +466,19 @@ export default function Home() {
         answer: h.answer,
       }));
 
-      const token = await getAuthToken(currentUser);
-      const res = await fetch("/api/documents/query", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-          "X-User-Id": currentUser,
-        },
-        body: JSON.stringify({
+      const res = await api.queryDocuments(
+        {
           query: queryToUse,
           document_id: selectedDocIdForQa !== "all" ? selectedDocIdForQa : null,
           user_id: currentUser,
           top_k: 6,
           history: recentHistory,
-        }),
-      });
+        },
+        currentUser
+      );
 
-      if (res.ok) {
-        const data = await res.json();
+      if (res.ok && res.data) {
+        const data = res.data;
         const selectedDoc = documents.find((d) => d.document_id === selectedDocIdForQa);
         const targetDocName = selectedDoc ? selectedDoc.filename : "All Indexed Documents";
 
@@ -541,8 +498,7 @@ export default function Home() {
         setRagHistory((prev) => [newEntry, ...prev]);
         setRagQuestion("");
       } else {
-        const err = await res.json().catch(() => ({}));
-        const errMsg = err.detail || "Query failed. Please verify the document index.";
+        const errMsg = typeof res.data === "string" ? res.data : (res.data?.detail || "Query failed. Please verify the document index.");
         setRagError(errMsg);
         if (res.status === 403) {
           const selectedDoc = documents.find((d) => d.document_id === selectedDocIdForQa);
